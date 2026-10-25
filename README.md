@@ -19,8 +19,8 @@ Patrón de uso MVVM
 MainActivity.kt # Navegación (NavHost)
 
 Librerias:
-
     Jetpack Compose + Material 3
     Navigation Compose
     ViewModel + StateFlow
     Room (con KSP)
+
