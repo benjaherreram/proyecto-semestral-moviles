@@ -7,45 +7,60 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.cappucare.data.*
-import com.example.cappucare.logic.*
+import com.example.cappucare.data.AppDatabase
+import com.example.cappucare.data.InventarioRepository
+import com.example.cappucare.data.Movimiento
+import com.example.cappucare.data.Producto
+import com.example.cappucare.logic.ErroresMov
+import com.example.cappucare.logic.ErroresProducto
+import com.example.cappucare.logic.FormProducto
+import com.example.cappucare.logic.Notificador
+import com.example.cappucare.logic.Validador
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 
 class InventarioViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val dao = AppDatabase.get(app).dao()
+    private val repo = InventarioRepository(AppDatabase.get(app))
 
-    val productos = dao.productos().stateIn(viewModelScope,
-        SharingStarted.WhileSubscribed(5000), emptyList())
+    val productos: StateFlow<List<Producto>> = repo.productos
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // estado del formulario de producto
-    var form by mutableStateOf(FormProducto()); private set
-    var errores by mutableStateOf(ErroresProducto()); private set
+    var form by mutableStateOf(FormProducto())
+        private set
+    var errores by mutableStateOf(ErroresProducto())
+        private set
     private var intentoGuardar = false
 
-    // estado de la pantalla de movimientos
-    var seleccionado by mutableStateOf<Producto?>(null); private set
-    var erroresMov by mutableStateOf(ErroresMov()); private set
+    var seleccionado by mutableStateOf<Producto?>(null)
+        private set
+    var erroresMov by mutableStateOf(ErroresMov())
+        private set
 
     init {
         viewModelScope.launch {
-            if (dao.contar() == 0) {
-                dao.insertarProducto(Producto(codigo = "GUA-001", nombre = "Guantes de nitrilo", categoria = "Protección", cantidad = 120, unidad = "caja", minimo = 20, ubicacion = "Bodega A"))
-                dao.insertarProducto(Producto(codigo = "MAS-002", nombre = "Mascarillas quirúrgicas", categoria = "Protección", cantidad = 8, unidad = "caja", minimo = 15, ubicacion = "Bodega A"))
-                dao.insertarProducto(Producto(codigo = "JER-003", nombre = "Jeringas 5ml", categoria = "Insumos clínicos", cantidad = 50, unidad = "unidad", minimo = 10, ubicacion = "Bodega B"))
+            if (repo.contar() == 0) {
+                repo.insertar(Producto(codigo = "GUA-001", nombre = "Guantes de nitrilo", categoria = "Protección", cantidad = 120, unidad = "caja", minimo = 20, ubicacion = "Bodega A"))
+                repo.insertar(Producto(codigo = "MAS-002", nombre = "Mascarillas quirúrgicas", categoria = "Protección", cantidad = 8, unidad = "caja", minimo = 15, ubicacion = "Bodega A"))
+                repo.insertar(Producto(codigo = "JER-003", nombre = "Jeringas 5ml", categoria = "Insumos clínicos", cantidad = 50, unidad = "unidad", minimo = 10, ubicacion = "Bodega B"))
             }
         }
     }
+
+
     fun cambiarForm(nuevo: FormProducto) {
         form = nuevo
         if (intentoGuardar) errores = Validador.producto(nuevo)
     }
 
     fun limpiarForm() {
-        form = FormProducto(); errores = ErroresProducto(); intentoGuardar = false
+        form = FormProducto()
+        errores = ErroresProducto()
+        intentoGuardar = false
     }
 
     fun guardarFoto(bmp: Bitmap) {
@@ -56,21 +71,25 @@ class InventarioViewModel(app: Application) : AndroidViewModel(app) {
 
     fun guardarProducto(onOk: () -> Unit) {
         intentoGuardar = true
-        val e = Validador.producto(form)
+        val e: ErroresProducto = Validador.producto(form)
         errores = e
         if (e.hayError()) return
 
         viewModelScope.launch {
-            if (dao.existeCodigo(form.codigo.trim()) > 0) {
+            if (repo.existeCodigo(form.codigo.trim())) {
                 errores = e.copy(codigo = "Ya existe un producto con ese código")
                 return@launch
             }
-            dao.insertarProducto(
+            repo.insertar(
                 Producto(
-                    codigo = form.codigo.trim(), nombre = form.nombre.trim(),
-                    categoria = form.categoria.trim(), cantidad = form.cantidad.toInt(),
-                    unidad = form.unidad.trim(), minimo = form.minimo.toInt(),
-                    ubicacion = form.ubicacion.trim(), fotoPath = form.fotoPath
+                    codigo = form.codigo.trim(),
+                    nombre = form.nombre.trim(),
+                    categoria = form.categoria.trim(),
+                    cantidad = form.cantidad.toInt(),
+                    unidad = form.unidad.trim(),
+                    minimo = form.minimo.toInt(),
+                    ubicacion = form.ubicacion.trim(),
+                    fotoPath = form.fotoPath
                 )
             )
             limpiarForm()
@@ -78,26 +97,34 @@ class InventarioViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+
     fun cargarProducto(id: Int) {
         erroresMov = ErroresMov()
-        viewModelScope.launch { seleccionado = dao.productoPorId(id) }
+        viewModelScope.launch { seleccionado = repo.porId(id) }
     }
 
-    fun historial(id: Int) = dao.movimientos(id)
+    fun historial(id: Int): Flow<List<Movimiento>> = repo.movimientos(id)
 
     fun registrarMovimiento(tipo: String, cantidad: String, motivo: String, onOk: () -> Unit) {
-        val p = seleccionado ?: return
-        val e = Validador.movimiento(tipo, cantidad, motivo, p.cantidad)
+        val p: Producto = seleccionado ?: return
+        val e: ErroresMov = Validador.movimiento(tipo, cantidad, motivo, p.cantidad)
         erroresMov = e
         if (e.hayError()) return
 
-        val c = cantidad.toInt()
-        val nuevoStock = if (tipo == "INGRESO") p.cantidad + c else p.cantidad - c
+        val c: Int = cantidad.toInt()
+        val nuevoStock: Int = if (tipo == "INGRESO") p.cantidad + c else p.cantidad - c
 
         viewModelScope.launch {
-            dao.actualizarProducto(p.copy(cantidad = nuevoStock))
-            dao.insertarMov(Movimiento(productoId = p.id, tipo = tipo, cantidad = c, motivo = motivo.trim(), fecha = System.currentTimeMillis()))
-            seleccionado = p.copy(cantidad = nuevoStock)
+            val actualizado = p.copy(cantidad = nuevoStock)
+            val mov = Movimiento(
+                productoId = p.id,
+                tipo = tipo,
+                cantidad = c,
+                motivo = motivo.trim(),
+                fecha = System.currentTimeMillis()
+            )
+            repo.registrarMovimiento(actualizado, mov)
+            seleccionado = actualizado
 
             if (nuevoStock <= p.minimo) {
                 Notificador.avisar(getApplication(), p.nombre, nuevoStock)
